@@ -37,7 +37,11 @@ const parseAllowedOrigins = () => {
     .filter(Boolean);
 };
 
-const allowedOrigins = parseAllowedOrigins();
+// const allowedOrigins = parseAllowedOrigins();
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
 app.use(
   cors({
     origin(origin, cb) {

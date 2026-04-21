@@ -1,6 +1,7 @@
 const fs = require('fs');
 const util = require('util');
 const crypto = require('crypto');
+const axios = require('axios');
 const Property = require('../models/Property');
 const BrochureLead = require('../models/BrochureLead');
 const cloudinary = require('../config/cloudinary');
@@ -359,6 +360,8 @@ const deleteProperty = async (req, res, next) => {
 const createBrochureLead = async (req, res, next) => {
   try {
     const { id } = req.params;
+
+    // 🔍 Get property
     const property = await Property.findById(id).select('_id title brochureUrl');
 
     if (!property) {
@@ -368,12 +371,14 @@ const createBrochureLead = async (req, res, next) => {
     }
 
     const brochureUrl = property.brochureUrl ? String(property.brochureUrl).trim() : '';
+
     if (!brochureUrl) {
       const error = new Error('Brochure not available');
       error.statusCode = 404;
       throw error;
     }
 
+    // 🧾 Validate input
     const name = req.body?.name != null ? String(req.body.name).trim() : '';
     const mobile = normalizeMobile(req.body?.mobile);
 
@@ -382,15 +387,18 @@ const createBrochureLead = async (req, res, next) => {
       error.statusCode = 400;
       throw error;
     }
+
     if (!/^\d{10}$/.test(mobile)) {
       const error = new Error('Valid 10-digit mobile number is required');
       error.statusCode = 400;
       throw error;
     }
 
+    // 🔐 Generate token
     const token = crypto.randomBytes(24).toString('hex');
-    const tokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    const tokenExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
+    // 🌐 Get IP
     const ip =
       String(req.headers['x-forwarded-for'] || '')
         .split(',')[0]
@@ -398,6 +406,8 @@ const createBrochureLead = async (req, res, next) => {
       req.socket?.remoteAddress ||
       '';
 
+    console.log("🔥 Step 1: Controller hit");
+    // 💾 Save in DB
     await BrochureLead.create({
       propertyId: property._id,
       name,
@@ -408,6 +418,33 @@ const createBrochureLead = async (req, res, next) => {
       ip: String(ip || ''),
     });
 
+    console.log("🔥 Step 2: After DB save");
+
+    // 📊 SEND TO GOOGLE SHEET (NON-BLOCKING)
+    try {
+
+      console.log("🔥 Step 3: Before Google call");
+      await axios.post(
+        process.env.GOOGLE_SCRIPT_URL,
+        {
+          name,
+          phone: mobile,
+          property: property.title, // optional but useful
+          sheetName: "Brochure Leads"
+        },
+        {
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      );
+      console.log("🔥 Step 4: After Google call");
+    } catch (err) {
+      console.error("❌ Google Sheet Error:", err.message);
+      // Do NOT break main flow
+    }
+
+    // ✅ Response
     res.json({
       success: true,
       data: {
@@ -416,6 +453,7 @@ const createBrochureLead = async (req, res, next) => {
         downloadUrl: `/api/property/${property._id}/brochure-download?token=${encodeURIComponent(token)}`,
       },
     });
+
   } catch (error) {
     next(error);
   }
@@ -507,6 +545,60 @@ const downloadBrochure = async (req, res, next) => {
   }
 };
 
+const createContactLead = async (req, res, next) => {
+
+  try {
+    const name = req.body?.name != null ? String(req.body.name).trim() : '';
+    const email = req.body?.email != null ? String(req.body.email).trim() : '';
+    const mobile = normalizeMobile(req.body?.phone);
+    const message = req.body?.message != null ? String(req.body.message).trim() : '';
+    const date = req.body?.date != null ? String(req.body.date).trim() : '';
+    const time = req.body?.time != null ? String(req.body.time).trim() : '';
+
+    if (!name) {
+      return res.status(400).json({ message: "Name required" });
+    }
+
+    if (!/^\d{10}$/.test(mobile)) {
+      return res.status(400).json({ message: "Invalid phone" });
+    }
+
+    // 🔥 SEND TO GOOGLE SHEET
+    try {
+      if (!process.env.GOOGLE_SCRIPT_URL) {
+        throw new Error('GOOGLE_SCRIPT_URL is not configured');
+      }
+
+      const response = await axios.post(
+        process.env.GOOGLE_SCRIPT_URL,
+        {
+          name,
+          phone: mobile,
+          email,
+          message,
+          date,
+          time,
+          sheetName: 'Contact',
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: 10000,
+        }
+      );
+      console.log('✅ Contact lead synced to Google Sheet:', response.status);
+    } catch (err) {
+      console.error('Google Sheet Error:', err.message);
+    }
+
+    res.json({ success: true });
+
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   createProperty,
   getAllProperties,
@@ -515,4 +607,5 @@ module.exports = {
   deleteProperty,
   createBrochureLead,
   downloadBrochure,
+  createContactLead
 };
