@@ -362,7 +362,7 @@ const createBrochureLead = async (req, res, next) => {
     const { id } = req.params;
 
     // 🔍 Get property
-    const property = await Property.findById(id).select('_id title brochureUrl');
+    const property = await Property.findById(id).select('_id title location type brochureUrl');
 
     if (!property) {
       const error = new Error('Property not found');
@@ -429,7 +429,11 @@ const createBrochureLead = async (req, res, next) => {
         {
           name,
           phone: mobile,
-          property: property.title, // optional but useful
+          property: property.title,
+          propertyId: String(property._id),
+          propertyTitle: property.title || '',
+          propertyLocation: property.location || '',
+          propertyType: property.type || '',
           sheetName: "Brochure Leads"
         },
         {
