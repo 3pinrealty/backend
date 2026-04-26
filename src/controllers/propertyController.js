@@ -14,6 +14,16 @@ const toNum = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+const toPriceText = (v) => {
+  if (v == null) return '';
+  return String(v).trim();
+};
+
+const isValidPriceText = (v) => {
+  if (!v) return false;
+  return /\d/.test(v) && /[a-zA-Z]/.test(v);
+};
+
 const toBool = (v) => v === true || v === 'true' || v === '1' || v === 'on';
 
 const parseMultilineList = (s) => {
@@ -124,9 +134,9 @@ const uploadSingleToCloudinary = async (file, opts = {}) => {
 
 const bodyPayloadFromReq = (body) => ({
   title: body.title != null ? String(body.title).trim() : '',
-  price: toNum(body.price),
-  minPrice: toNum(body.minPrice),
-  maxPrice: toNum(body.maxPrice),
+  price: toPriceText(body.price),
+  minPrice: toPriceText(body.minPrice),
+  maxPrice: toPriceText(body.maxPrice),
   currency: typeof body.currency === 'string' && body.currency.trim() ? body.currency.trim() : 'INR',
   paymentPlan: body.paymentPlan != null ? String(body.paymentPlan).trim() : '',
   location: body.location != null ? String(body.location).trim() : '',
@@ -163,8 +173,8 @@ const createProperty = async (req, res, next) => {
   try {
     const base = bodyPayloadFromReq(req.body);
 
-    if (!base.title || base.price == null || !Number.isFinite(base.price)) {
-      const error = new Error('Title and a valid price are required');
+    if (!base.title || !isValidPriceText(base.price)) {
+      const error = new Error('Title and a valid list price are required (example: 80 Lakhs)');
       error.statusCode = 400;
       throw error;
     }
@@ -187,7 +197,6 @@ const createProperty = async (req, res, next) => {
 
     const property = await Property.create({
       ...base,
-      price: base.price,
       images: imageUrls,
       floorPlans: floorPlanUrls,
       brochureUrl: brochureUrl || base.brochureUrl,
@@ -262,7 +271,7 @@ const updateProperty = async (req, res, next) => {
     const newBrochureUrl = brochureFile ? await uploadSingleToCloudinary(brochureFile, { folder: 'brochures' }) : null;
 
     if (typeof req.body.title !== 'undefined') existing.title = incoming.title;
-    if (typeof req.body.price !== 'undefined' && incoming.price != null) existing.price = incoming.price;
+    if (typeof req.body.price !== 'undefined') existing.price = incoming.price;
     if (typeof req.body.minPrice !== 'undefined') existing.minPrice = incoming.minPrice;
     if (typeof req.body.maxPrice !== 'undefined') existing.maxPrice = incoming.maxPrice;
     if (typeof req.body.currency !== 'undefined') existing.currency = incoming.currency;
@@ -309,8 +318,8 @@ const updateProperty = async (req, res, next) => {
       error.statusCode = 400;
       throw error;
     }
-    if (existing.price == null || !Number.isFinite(existing.price)) {
-      const error = new Error('A valid price is required');
+    if (!isValidPriceText(String(existing.price || '').trim())) {
+      const error = new Error('A valid list price is required (example: 80 Lakhs)');
       error.statusCode = 400;
       throw error;
     }

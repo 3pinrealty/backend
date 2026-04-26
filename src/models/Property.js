@@ -17,16 +17,19 @@ const propertySchema = new mongoose.Schema(
       trim: true,
     },
     price: {
-      type: Number,
+      type: String,
       required: true,
+      trim: true,
     },
     minPrice: {
-      type: Number,
-      default: null,
+      type: String,
+      default: '',
+      trim: true,
     },
     maxPrice: {
-      type: Number,
-      default: null,
+      type: String,
+      default: '',
+      trim: true,
     },
     currency: {
       type: String,
