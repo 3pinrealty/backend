@@ -144,9 +144,10 @@ const bodyPayloadFromReq = (body) => ({
   description: body.description != null ? String(body.description) : '',
   bedrooms: toNum(body.bedrooms),
   bathrooms: toNum(body.bathrooms),
-  area: toNum(body.area),
+  area: body.area != null ? String(body.area).trim() : '',
   areaSqftMin: toNum(body.areaSqftMin),
   areaSqftMax: toNum(body.areaSqftMax),
+  landAreaAcres: toNum(body.landAreaAcres),
   type: body.type != null ? String(body.type).trim() : '',
   builder: body.builder != null ? String(body.builder).trim() : '',
   unitsCount: toNum(body.unitsCount),
@@ -287,6 +288,7 @@ const updateProperty = async (req, res, next) => {
     if (typeof req.body.area !== 'undefined') existing.area = incoming.area;
     if (typeof req.body.areaSqftMin !== 'undefined') existing.areaSqftMin = incoming.areaSqftMin;
     if (typeof req.body.areaSqftMax !== 'undefined') existing.areaSqftMax = incoming.areaSqftMax;
+    if (typeof req.body.landAreaAcres !== 'undefined') existing.landAreaAcres = incoming.landAreaAcres;
     if (typeof req.body.type !== 'undefined') existing.type = incoming.type;
     if (typeof req.body.builder !== 'undefined') existing.builder = incoming.builder;
     if (typeof req.body.unitsCount !== 'undefined') existing.unitsCount = incoming.unitsCount;

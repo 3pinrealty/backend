@@ -66,14 +66,19 @@ const propertySchema = new mongoose.Schema(
       default: null,
     },
     area: {
-      type: Number,
-      default: null,
+      type: String,
+      default: '',
+      trim: true,
     },
     areaSqftMin: {
       type: Number,
       default: null,
     },
     areaSqftMax: {
+      type: Number,
+      default: null,
+    },
+    landAreaAcres: {
       type: Number,
       default: null,
     },
