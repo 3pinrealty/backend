@@ -14,6 +14,17 @@ const toNum = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+const parsePriceNumeric = (priceStr) => {
+  if (!priceStr || typeof priceStr !== 'string') return null;
+  const cleaned = priceStr.trim().toUpperCase();
+  let num = parseFloat(cleaned.replace(/[^0-9.]/g, ''));
+  if (!Number.isFinite(num)) return null;
+  if (cleaned.includes('CRORE') || cleaned.includes('CR')) num *= 10000000;
+  else if (cleaned.includes('LAKH') || cleaned.includes('LK')) num *= 100000;
+  else if (cleaned.includes('THOUSAND') || cleaned.includes('K')) num *= 1000;
+  return num;
+};
+
 const toPriceText = (v) => {
   if (v == null) return '';
   return String(v).trim();
@@ -135,6 +146,7 @@ const uploadSingleToCloudinary = async (file, opts = {}) => {
 const bodyPayloadFromReq = (body) => ({
   title: body.title != null ? String(body.title).trim() : '',
   price: toPriceText(body.price),
+  priceNumeric: parsePriceNumeric(body.price),
   minPrice: toPriceText(body.minPrice),
   maxPrice: toPriceText(body.maxPrice),
   currency: typeof body.currency === 'string' && body.currency.trim() ? body.currency.trim() : 'INR',
@@ -212,9 +224,107 @@ const createProperty = async (req, res, next) => {
   }
 };
 
-const getAllProperties = async (_req, res, next) => {
+const getAllProperties = async (req, res, next) => {
   try {
-    const properties = await Property.find().sort({ createdAt: -1 });
+    const {
+      location,
+      minBudget,
+      maxBudget,
+      type,
+      status,
+      bedrooms,
+      completionYear,
+    } = req.query;
+
+    const filter = {};
+
+    // location — case-insensitive partial match
+    if (location) {
+      filter.location = { $regex: location, $options: 'i' };
+    }
+
+    // type — exact match
+    if (type) {
+      filter.type = type;
+    }
+
+    // minBudget / maxBudget — numeric range on price
+    // price may be stored as string ("80 Lakhs") so parse it
+    const parsePriceNum = (priceStr) => {
+      if (priceStr == null) return null;
+      const s = String(priceStr).trim().toUpperCase();
+      let num = parseFloat(s.replace(/[^0-9.]/g, ''));
+      if (!Number.isFinite(num)) return null;
+      if (s.includes('CRORE') || s.includes('CR')) num *= 10000000;
+      else if (s.includes('LAKH') || s.includes('LK')) num *= 100000;
+      else if (s.includes('THOUSAND') || s.includes('K')) num *= 1000;
+      return num;
+    };
+
+    const minNum = minBudget != null && minBudget !== '' ? parseFloat(minBudget) : null;
+    const maxNum = maxBudget != null && maxBudget !== '' ? parseFloat(maxBudget) : null;
+
+    if (minNum != null || maxNum != null) {
+      // Build an $or that checks both priceNumeric (if populated) and raw price string
+      const priceRangeConditions = [];
+
+      if (minNum != null && maxNum != null) {
+        priceRangeConditions.push(
+          { priceNumeric: { $gte: minNum, $lte: maxNum } },
+          { price: { $regex: `^${minNum}`, $options: 'i' } },
+          { price: { $regex: `^${maxNum}`, $options: 'i' } }
+        );
+      } else if (minNum != null) {
+        priceRangeConditions.push(
+          { priceNumeric: { $gte: minNum } },
+          { price: { $regex: `${minNum}`, $options: 'i' } }
+        );
+      } else if (maxNum != null) {
+        priceRangeConditions.push(
+          { priceNumeric: { $lte: maxNum } },
+          { price: { $regex: `${maxNum}`, $options: 'i' } }
+        );
+      }
+
+      filter.$or = priceRangeConditions;
+    }
+
+    // status — "Ready to Move" (isNewDevelopment=false) | "Under Construction" (isNewDevelopment=true)
+    if (status) {
+      const list = status.split(',').map((s) => s.trim()).filter(Boolean);
+      const statusConditions = [];
+      if (list.includes('Ready to Move')) statusConditions.push({ isNewDevelopment: false });
+      if (list.includes('Under Construction')) statusConditions.push({ isNewDevelopment: true });
+      if (statusConditions.length > 0) {
+        filter.$and = filter.$and || [];
+        filter.$and.push({ $or: statusConditions });
+      }
+    }
+
+    // bedrooms — numeric match
+    if (bedrooms) {
+      const nums = bedrooms.split(',').map((s) => Number(s.trim())).filter(Number.isFinite);
+      if (nums.length) filter.bedrooms = { $in: nums };
+    }
+
+    // completionYear — extract year from deliveryDate
+    if (completionYear) {
+      const years = completionYear.split(',').map((s) => Number(s.trim())).filter(Number.isFinite);
+      if (years.length) {
+        const dateConditions = years.map((year) => ({
+          deliveryDate: {
+            $gte: new Date(`${year}-01-01`),
+            $lte: new Date(`${year}-12-31T23:59:59.999`),
+          },
+        }));
+        filter.$and = filter.$and || [];
+        filter.$and.push({ $or: dateConditions });
+      }
+    }
+
+    console.log('[Property Filter] filter:', JSON.stringify(filter, null, 2));
+
+    const properties = await Property.find(filter).sort({ createdAt: -1 });
 
     res.json({
       success: true,

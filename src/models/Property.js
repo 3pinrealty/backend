@@ -21,6 +21,10 @@ const propertySchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    priceNumeric: {
+      type: Number,
+      default: null,
+    },
     minPrice: {
       type: String,
       default: '',
