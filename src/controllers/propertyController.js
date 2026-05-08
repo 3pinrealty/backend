@@ -67,6 +67,21 @@ const parseDate = (v) => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
+const parseImageOrder = (value) => {
+  if (typeof value === 'undefined') return null;
+  if (Array.isArray(value)) return value.map((x) => String(x).trim()).filter(Boolean);
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map((x) => String(x).trim()).filter(Boolean);
+  } catch (_err) {
+    return null;
+  }
+};
+
 const normalizeMobile = (v) => {
   const s = String(v ?? '').trim();
   const digits = s.replace(/[^\d]/g, '');
@@ -130,7 +145,14 @@ const uploadFilesToCloudinary = async (files = [], opts = {}) => {
       return result.secure_url;
     } catch (error) {
       await unlinkFile(file.path).catch(() => {});
-      throw error;
+      const cloudinaryMessage =
+        error?.message ||
+        error?.error?.message ||
+        error?.error?.name ||
+        'File upload failed';
+      const wrapped = new Error(`Image upload failed: ${cloudinaryMessage}`);
+      wrapped.statusCode = error?.http_code ? Number(error.http_code) : 502;
+      throw wrapped;
     }
   });
 
@@ -171,6 +193,7 @@ const bodyPayloadFromReq = (body) => ({
   isNewDevelopment: toBool(body.isNewDevelopment),
   featured: toBool(body.featured),
   launchStatus: body.launchStatus != null ? String(body.launchStatus).trim() : '',
+  propertyVisibility: body.propertyVisibility != null ? String(body.propertyVisibility).trim() : '',
   cashbackEligible: toBool(body.cashbackEligible),
   amenities: parseMultilineList(body.amenitiesText),
   nearbyLandmarks: parseLandmarksText(body.landmarksText),
@@ -198,7 +221,14 @@ const createProperty = async (req, res, next) => {
       throw error;
     }
 
-    const imageUrls = await uploadFilesToCloudinary(req.files?.images || [], { folder: 'properties' });
+    const imageFiles = req.files?.images || [];
+    if (!imageFiles.length) {
+      const error = new Error('At least one image is required');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const imageUrls = await uploadFilesToCloudinary(imageFiles, { folder: 'properties' });
     if (!imageUrls.length) {
       const error = new Error('At least one image is required');
       error.statusCode = 400;
@@ -380,6 +410,23 @@ const updateProperty = async (req, res, next) => {
 
     const brochureFile = req.files?.brochure?.[0];
     const newBrochureUrl = brochureFile ? await uploadSingleToCloudinary(brochureFile, { folder: 'brochures' }) : null;
+    const requestedImageOrder = parseImageOrder(req.body?.imageOrder);
+
+    if (requestedImageOrder !== null) {
+      const existingImageSet = new Set((existing.images || []).map((u) => String(u)));
+      const dedupedOrdered = [];
+      requestedImageOrder.forEach((url) => {
+        const normalized = String(url);
+        if (!existingImageSet.has(normalized)) return;
+        if (dedupedOrdered.includes(normalized)) return;
+        dedupedOrdered.push(normalized);
+      });
+
+      if (dedupedOrdered.length > 0) {
+        const remaining = (existing.images || []).filter((u) => !dedupedOrdered.includes(String(u)));
+        existing.images = [...dedupedOrdered, ...remaining];
+      }
+    }
 
     if (typeof req.body.title !== 'undefined') existing.title = incoming.title;
     if (typeof req.body.price !== 'undefined') existing.price = incoming.price;
@@ -410,6 +457,7 @@ const updateProperty = async (req, res, next) => {
     if (typeof req.body.isNewDevelopment !== 'undefined') existing.isNewDevelopment = incoming.isNewDevelopment;
     if (typeof req.body.featured !== 'undefined') existing.featured = incoming.featured;
     if (typeof req.body.launchStatus !== 'undefined') existing.launchStatus = incoming.launchStatus;
+    if (typeof req.body.propertyVisibility !== 'undefined') existing.propertyVisibility = incoming.propertyVisibility;
     if (typeof req.body.cashbackEligible !== 'undefined') existing.cashbackEligible = incoming.cashbackEligible;
     if (typeof req.body.amenitiesText !== 'undefined') existing.amenities = incoming.amenities;
     if (typeof req.body.landmarksText !== 'undefined') existing.nearbyLandmarks = incoming.nearbyLandmarks;

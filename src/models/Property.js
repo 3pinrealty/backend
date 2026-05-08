@@ -133,6 +133,11 @@ const propertySchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    propertyVisibility: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     cashbackEligible: {
       type: Boolean,
       default: false,
