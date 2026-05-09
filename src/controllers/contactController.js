@@ -1,7 +1,7 @@
 const Contact = require('../models/Contact');
 const Property = require('../models/Property');
 const axios = require('axios');
-const { buildGoogleSheetPayload } = require('../utils/sheetSchema');
+// const { buildGoogleSheetPayload } = require('../utils/sheetSchema');
 
 const createContact = async (req, res) => {
   try {
@@ -13,6 +13,7 @@ const createContact = async (req, res) => {
     const rawPhone = payload?.phone ?? payload?.mobile ?? '';
     const phone = String(rawPhone).trim();
     const message = payload?.message != null ? String(payload.message).trim() : '';
+    const propertyDetails = payload?.propertyDetails != null ? String(payload.propertyDetails).trim() : '';
     const date = payload?.date != null ? String(payload.date).trim() : '';
     const time = payload?.time != null ? String(payload.time).trim() : '';
     const requestedSheetName = payload?.sheetName != null ? String(payload.sheetName).trim() : '';
@@ -70,14 +71,44 @@ const createContact = async (req, res) => {
         sheetName: targetSheet,
       };
 
-      console.log('🔧 Building Google Sheets payload for:', targetSheet);
-      const cleanedPayload = buildGoogleSheetPayload(googlePayload, targetSheet);
+      // console.log('🔧 Building Google Sheets payload for:', targetSheet);
+      // const cleanedPayload = buildGoogleSheetPayload(googlePayload, targetSheet);
 
       console.log('📤 Sending to Google Sheets:', cleanedPayload);
 
       const response = await axios.post(
         process.env.GOOGLE_SCRIPT_URL,
-        cleanedPayload,
+        (() => {
+          if (targetSheet === 'Schedule a visit') {
+            return {
+              name,
+              email,
+              phone: cleanPhone,
+              message,
+              date: date || '',
+              time: time || '',
+              sheetName: targetSheet,
+            };
+          }
+
+          if (targetSheet === 'Sell Your Property') {
+            return {
+              name,
+              email,
+              phone: cleanPhone,
+              propertyDetails,
+              sheetName: targetSheet,
+            };
+          }
+
+          return {
+            name,
+            phone: cleanPhone,
+            email,
+            message,
+            sheetName: targetSheet,
+          };
+        })(),
         {
           headers: {
             'Content-Type': 'application/json',

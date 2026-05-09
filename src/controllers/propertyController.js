@@ -549,7 +549,7 @@ const createBrochureLead = async (req, res, next) => {
 
     // 🧾 Validate input
     const name = req.body?.name != null ? String(req.body.name).trim() : '';
-    const mobile = normalizeMobile(req.body?.mobile);
+    const mobile = normalizeMobile(req.body?.phone ?? req.body?.mobile);
 
     if (!name) {
       const error = new Error('Name is required');
