@@ -1,7 +1,5 @@
 const Contact = require('../models/Contact');
-const Property = require('../models/Property');
-const axios = require('axios');
-// const { buildGoogleSheetPayload } = require('../utils/sheetSchema');
+const { buildGoogleSheetPayload, normalizeSheetName, postToGoogleSheets } = require('../utils/googleSheets');
 
 const createContact = async (req, res) => {
   try {
@@ -17,16 +15,7 @@ const createContact = async (req, res) => {
     const date = payload?.date != null ? String(payload.date).trim() : '';
     const time = payload?.time != null ? String(payload.time).trim() : '';
     const requestedSheetName = payload?.sheetName != null ? String(payload.sheetName).trim() : '';
-
-    // Determine target sheet
-    const targetSheet =
-      requestedSheetName === 'Schedule a visit'
-        ? 'Schedule a visit'
-        : requestedSheetName === 'Sell Your Property'
-          ? 'Sell Your Property'
-          : requestedSheetName === 'Brochure Leads'
-            ? 'Brochure Leads'
-            : 'Contact';
+    const targetSheet = normalizeSheetName(requestedSheetName);
 
     console.log(`📌 Target sheet: "${targetSheet}"`);
 
@@ -54,76 +43,50 @@ const createContact = async (req, res) => {
 
     const contact = await Contact.create(dbPayload);
 
+    let googleSheetsSynced = false;
+    let googleSheetsError = null;
+
     // 📊 SEND TO GOOGLE SHEETS
     try {
-      if (!process.env.GOOGLE_SCRIPT_URL) {
-        throw new Error('GOOGLE_SCRIPT_URL is not configured');
-      }
-
-      // Build clean payload for Google Sheets using schema validation
-      const googlePayload = {
-        name,
-        phone: cleanPhone,
-        email: email || undefined,
-        message: message || undefined,
-        date: date || undefined,
-        time: time || undefined,
-        sheetName: targetSheet,
-      };
-
-      // console.log('🔧 Building Google Sheets payload for:', targetSheet);
-      // const cleanedPayload = buildGoogleSheetPayload(googlePayload, targetSheet);
-
-      console.log('📤 Sending to Google Sheets:', cleanedPayload);
-
-      const response = await axios.post(
-        process.env.GOOGLE_SCRIPT_URL,
-        (() => {
-          if (targetSheet === 'Schedule a visit') {
-            return {
-              name,
-              email,
-              phone: cleanPhone,
-              message,
-              date: date || '',
-              time: time || '',
-              sheetName: targetSheet,
-            };
-          }
-
-          if (targetSheet === 'Sell Your Property') {
-            return {
-              name,
-              email,
-              phone: cleanPhone,
-              propertyDetails,
-              sheetName: targetSheet,
-            };
-          }
-
-          return {
-            name,
-            phone: cleanPhone,
-            email,
-            message,
-            sheetName: targetSheet,
-          };
-        })(),
+      const googlePayload = buildGoogleSheetPayload(
         {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          timeout: 10000,
-        }
+          sheetName: targetSheet,
+          name,
+          phone: cleanPhone,
+          email,
+          message,
+          date,
+          time,
+          propertyDetails,
+        },
+        targetSheet,
+        contact.createdAt
       );
 
-      console.log('✅ Contact saved to Google Sheet:', response.status);
+      await postToGoogleSheets({
+        payload: googlePayload,
+        context: `createContact/${targetSheet}`,
+      });
+
+      googleSheetsSynced = true;
+      console.log('✅ Contact saved to Google Sheet');
     } catch (err) {
-      console.error('❌ Google Sheet Error:', err.response?.data || err.message);
-      // Don't fail the request if Google Sheets fails - user data is safe in DB
+      googleSheetsError = err?.response?.data || err.message;
+      console.error('❌ Google Sheet Error:', {
+        message: err.message,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
     }
 
-    res.status(201).json({ success: true, id: contact._id });
+    res.status(201).json({
+      success: true,
+      id: contact._id,
+      googleSheets: {
+        synced: googleSheetsSynced,
+        error: googleSheetsError,
+      },
+    });
   } catch (error) {
     console.error('❌ Contact creation error:', error);
     res.status(500).json({ error: 'Server error' });

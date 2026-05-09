@@ -1,10 +1,10 @@
 const fs = require('fs');
 const util = require('util');
 const crypto = require('crypto');
-const axios = require('axios');
 const Property = require('../models/Property');
 const BrochureLead = require('../models/BrochureLead');
 const cloudinary = require('../config/cloudinary');
+const { buildGoogleSheetPayload, postToGoogleSheets } = require('../utils/googleSheets');
 
 const unlinkFile = util.promisify(fs.unlink);
 
@@ -589,32 +589,33 @@ const createBrochureLead = async (req, res, next) => {
 
     console.log("🔥 Step 2: After DB save");
 
+    let googleSheetsSynced = false;
+    let googleSheetsError = null;
+
     // 📊 SEND TO GOOGLE SHEET (NON-BLOCKING)
     try {
-
-      console.log("🔥 Step 3: Before Google call");
-      await axios.post(
-        process.env.GOOGLE_SCRIPT_URL,
+      const googlePayload = buildGoogleSheetPayload(
         {
+          sheetName: 'Brochure Leads',
           name,
           phone: mobile,
-          property: property.title,
-          propertyId: String(property._id),
-          propertyTitle: property.title || '',
-          propertyLocation: property.location || '',
-          propertyType: property.type || '',
-          sheetName: "Brochure Leads"
         },
-        {
-          headers: {
-            "Content-Type": "application/json"
-          }
-        }
+        'Brochure Leads'
       );
-      console.log("🔥 Step 4: After Google call");
+
+      await postToGoogleSheets({
+        payload: googlePayload,
+        context: 'createBrochureLead/Brochure Leads',
+      });
+
+      googleSheetsSynced = true;
     } catch (err) {
-      console.error("❌ Google Sheet Error:", err.message);
-      // Do NOT break main flow
+      googleSheetsError = err?.response?.data || err.message;
+      console.error('❌ Google Sheet Error:', {
+        message: err.message,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
     }
 
     // ✅ Response
@@ -624,6 +625,10 @@ const createBrochureLead = async (req, res, next) => {
         token,
         expiresAt: tokenExpiresAt.toISOString(),
         downloadUrl: `/api/property/${property._id}/brochure-download?token=${encodeURIComponent(token)}`,
+      },
+      googleSheets: {
+        synced: googleSheetsSynced,
+        error: googleSheetsError,
       },
     });
 
@@ -738,31 +743,31 @@ const createContactLead = async (req, res, next) => {
 
     // 🔥 SEND TO GOOGLE SHEET
     try {
-      if (!process.env.GOOGLE_SCRIPT_URL) {
-        throw new Error('GOOGLE_SCRIPT_URL is not configured');
-      }
-
-      const response = await axios.post(
-        process.env.GOOGLE_SCRIPT_URL,
+      const googlePayload = buildGoogleSheetPayload(
         {
+          sheetName: 'Contact',
           name,
           phone: mobile,
           email,
           message,
           date,
           time,
-          sheetName: 'Contact',
         },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          timeout: 10000,
-        }
+        'Contact'
       );
-      console.log('✅ Contact lead synced to Google Sheet:', response.status);
+
+      await postToGoogleSheets({
+        payload: googlePayload,
+        context: 'createContactLead/Contact',
+      });
+
+      console.log('✅ Contact lead synced to Google Sheet');
     } catch (err) {
-      console.error('Google Sheet Error:', err.message);
+      console.error('Google Sheet Error:', {
+        message: err.message,
+        status: err?.response?.status,
+        data: err?.response?.data,
+      });
     }
 
     res.json({ success: true });
