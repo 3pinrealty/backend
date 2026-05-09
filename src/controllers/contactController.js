@@ -12,6 +12,9 @@ const createContact = async (req, res) => {
     const phone = String(rawPhone).trim();
     const message = payload?.message != null ? String(payload.message).trim() : '';
     const propertyDetails = payload?.propertyDetails != null ? String(payload.propertyDetails).trim() : '';
+    const propertyName = payload?.propertyName != null ? String(payload.propertyName).trim() : '';
+    const propertyLocation = payload?.propertyLocation != null ? String(payload.propertyLocation).trim() : '';
+    const propertyType = payload?.propertyType != null ? String(payload.propertyType).trim() : '';
     const date = payload?.date != null ? String(payload.date).trim() : '';
     const time = payload?.time != null ? String(payload.time).trim() : '';
     const requestedSheetName = payload?.sheetName != null ? String(payload.sheetName).trim() : '';
@@ -58,6 +61,9 @@ const createContact = async (req, res) => {
           date,
           time,
           propertyDetails,
+          propertyName,
+          propertyLocation,
+          propertyType,
         },
         targetSheet,
         contact.createdAt

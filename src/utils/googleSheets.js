@@ -9,9 +9,20 @@ const SHEET_NAME_MAP = {
 
 const SHEET_FIELDS = {
   Contact: ['name', 'phone', 'email', 'message', 'createdAt'],
-  'Schedule a visit': ['name', 'email', 'phone', 'message', 'date', 'time', 'createdAt'],
+  'Schedule a visit': [
+    'name',
+    'email',
+    'phone',
+    'message',
+    'date',
+    'time',
+    'propertyName',
+    'propertyLocation',
+    'propertyType',
+    'createdAt',
+  ],
   'Sell Your Property': ['name', 'email', 'phone', 'propertyDetails', 'createdAt'],
-  'Brochure Leads': ['name', 'phone', 'createdAt'],
+  'Brochure Leads': ['name', 'phone', 'propertyName', 'propertyLocation', 'propertyType', 'createdAt'],
 };
 
 const normalizeSheetName = (sheetName) => {

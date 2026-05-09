@@ -599,6 +599,9 @@ const createBrochureLead = async (req, res, next) => {
           sheetName: 'Brochure Leads',
           name,
           phone: mobile,
+          propertyName: property.title || '',
+          propertyLocation: property.location || '',
+          propertyType: property.type || '',
         },
         'Brochure Leads'
       );
