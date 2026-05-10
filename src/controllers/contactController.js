@@ -1,5 +1,8 @@
+const mongoose = require('mongoose');
 const Contact = require('../models/Contact');
+const Property = require('../models/Property');
 const { buildGoogleSheetPayload, normalizeSheetName, postToGoogleSheets } = require('../utils/googleSheets');
+const { isValidPhone, PHONE_VALIDATION_MESSAGE } = require('../utils/phoneValidation');
 
 const createContact = async (req, res) => {
   try {
@@ -12,9 +15,9 @@ const createContact = async (req, res) => {
     const phone = String(rawPhone).trim();
     const message = payload?.message != null ? String(payload.message).trim() : '';
     const propertyDetails = payload?.propertyDetails != null ? String(payload.propertyDetails).trim() : '';
-    const propertyName = payload?.propertyName != null ? String(payload.propertyName).trim() : '';
-    const propertyLocation = payload?.propertyLocation != null ? String(payload.propertyLocation).trim() : '';
-    const propertyType = payload?.propertyType != null ? String(payload.propertyType).trim() : '';
+    let propertyName = payload?.propertyName != null ? String(payload.propertyName).trim() : '';
+    let propertyLocation = payload?.propertyLocation != null ? String(payload.propertyLocation).trim() : '';
+    let propertyType = payload?.propertyType != null ? String(payload.propertyType).trim() : '';
     const date = payload?.date != null ? String(payload.date).trim() : '';
     const time = payload?.time != null ? String(payload.time).trim() : '';
     const requestedSheetName = payload?.sheetName != null ? String(payload.sheetName).trim() : '';
@@ -22,21 +25,37 @@ const createContact = async (req, res) => {
 
     console.log(`📌 Target sheet: "${targetSheet}"`);
 
+    // Match brochure-lead behavior: resolve property fields from DB when scheduling from a listing.
+    if (targetSheet === 'Schedule a visit') {
+      const rawPid = payload?.propertyId ?? payload?.property_id;
+      const propertyId = rawPid != null ? String(rawPid).trim() : '';
+      if (propertyId && mongoose.Types.ObjectId.isValid(propertyId)) {
+        try {
+          const prop = await Property.findById(propertyId).select('title location type').lean();
+          if (prop) {
+            propertyName = String(prop.title ?? '').trim();
+            propertyLocation = String(prop.location ?? '').trim();
+            propertyType = String(prop.type ?? '').trim();
+          }
+        } catch (_err) {
+          /* ignore lookup errors; keep client-provided values */
+        }
+      }
+    }
+
     if (!name || !phone) {
       return res.status(400).json({ error: 'Name and phone are required' });
     }
 
-    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
-
-    if (!/^\d{10}$/.test(cleanPhone)) {
-      return res.status(400).json({ error: 'Invalid phone number' });
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ error: PHONE_VALIDATION_MESSAGE });
     }
 
     // 💾 Save in DB
     const dbPayload = {
       name,
       email: email ? email.toLowerCase() : undefined,
-      phone: cleanPhone,
+      phone,
       message: message || undefined,
       date: date || undefined,
       time: time || undefined,
@@ -55,7 +74,7 @@ const createContact = async (req, res) => {
         {
           sheetName: targetSheet,
           name,
-          phone: cleanPhone,
+          phone,
           email,
           message,
           date,

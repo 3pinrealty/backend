@@ -5,6 +5,7 @@ const Property = require('../models/Property');
 const BrochureLead = require('../models/BrochureLead');
 const cloudinary = require('../config/cloudinary');
 const { buildGoogleSheetPayload, postToGoogleSheets } = require('../utils/googleSheets');
+const { isValidPhone, trimPhone, PHONE_VALIDATION_MESSAGE } = require('../utils/phoneValidation');
 
 const unlinkFile = util.promisify(fs.unlink);
 
@@ -12,6 +13,11 @@ const toNum = (v) => {
   if (v === '' || v == null) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+};
+
+const toPositiveNum = (v) => {
+  const n = toNum(v);
+  return n != null && n > 0 ? n : null;
 };
 
 const parsePriceNumeric = (priceStr) => {
@@ -23,6 +29,55 @@ const parsePriceNumeric = (priceStr) => {
   else if (cleaned.includes('LAKH') || cleaned.includes('LK')) num *= 100000;
   else if (cleaned.includes('THOUSAND') || cleaned.includes('K')) num *= 1000;
   return num;
+};
+
+const normalizeBudgetValue = (value) => {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    // Pure numeric strings from query params / DB should be treated directly.
+    if (/^\d+(\.\d+)?$/.test(trimmed)) {
+      const n = Number(trimmed);
+      return Number.isFinite(n) ? n : null;
+    }
+    return parsePriceNumeric(trimmed);
+  }
+  return null;
+};
+
+const derivePropertyBudgetRange = (property) => {
+  const minRange = normalizeBudgetValue(property?.minPrice);
+  const maxRange = normalizeBudgetValue(property?.maxPrice);
+  const numericPrice = normalizeBudgetValue(property?.priceNumeric);
+  const overall = normalizeBudgetValue(property?.price);
+
+  // Priority 1: priceNumeric (authoritative numeric value for list/overall price).
+  if (Number.isFinite(numericPrice)) {
+    return { low: numericPrice, high: numericPrice };
+  }
+
+  // Use explicit authored range only when both ends are available.
+  if (Number.isFinite(minRange) && Number.isFinite(maxRange)) {
+    return {
+      low: Math.min(minRange, maxRange),
+      high: Math.max(minRange, maxRange),
+    };
+  }
+
+  // If explicit range is incomplete, fall back to parsable list price text.
+  if (Number.isFinite(overall)) {
+    return { low: overall, high: overall };
+  }
+
+  // Last resort when only one side exists and list price is unavailable.
+  if (Number.isFinite(minRange) || Number.isFinite(maxRange)) {
+    const single = Number.isFinite(minRange) ? minRange : maxRange;
+    return { low: single, high: single };
+  }
+
+  return null;
 };
 
 const toPriceText = (v) => {
@@ -80,14 +135,6 @@ const parseImageOrder = (value) => {
   } catch (_err) {
     return null;
   }
-};
-
-const normalizeMobile = (v) => {
-  const s = String(v ?? '').trim();
-  const digits = s.replace(/[^\d]/g, '');
-  // Keep last 10 digits for Indian numbers that may include +91/0 prefixes
-  if (digits.length >= 10) return digits.slice(-10);
-  return digits;
 };
 
 const extractGoogleDriveFileId = (url) => {
@@ -179,14 +226,14 @@ const bodyPayloadFromReq = (body) => ({
   bedrooms: toNum(body.bedrooms),
   bathrooms: toNum(body.bathrooms),
   area: body.area != null ? String(body.area).trim() : '',
-  areaSqftMin: toNum(body.areaSqftMin),
-  areaSqftMax: toNum(body.areaSqftMax),
+  areaSqftMin: toPositiveNum(body.areaSqftMin),
+  areaSqftMax: toPositiveNum(body.areaSqftMax),
   landAreaAcres: toNum(body.landAreaAcres),
   type: body.type != null ? String(body.type).trim() : '',
   builder: body.builder != null ? String(body.builder).trim() : '',
   unitsCount: toNum(body.unitsCount),
-  pricePerSqftMin: toNum(body.pricePerSqftMin),
-  pricePerSqftMax: toNum(body.pricePerSqftMax),
+  pricePerSqftMin: toPositiveNum(body.pricePerSqftMin),
+  pricePerSqftMax: toPositiveNum(body.pricePerSqftMax),
   structure: body.structure != null ? String(body.structure).trim() : '',
   towerCount: toNum(body.towerCount),
   deliveryDate: parseDate(body.deliveryDate),
@@ -278,46 +325,9 @@ const getAllProperties = async (req, res, next) => {
       filter.type = type;
     }
 
-    // minBudget / maxBudget — numeric range on price
-    // price may be stored as string ("80 Lakhs") so parse it
-    const parsePriceNum = (priceStr) => {
-      if (priceStr == null) return null;
-      const s = String(priceStr).trim().toUpperCase();
-      let num = parseFloat(s.replace(/[^0-9.]/g, ''));
-      if (!Number.isFinite(num)) return null;
-      if (s.includes('CRORE') || s.includes('CR')) num *= 10000000;
-      else if (s.includes('LAKH') || s.includes('LK')) num *= 100000;
-      else if (s.includes('THOUSAND') || s.includes('K')) num *= 1000;
-      return num;
-    };
-
-    const minNum = minBudget != null && minBudget !== '' ? parseFloat(minBudget) : null;
-    const maxNum = maxBudget != null && maxBudget !== '' ? parseFloat(maxBudget) : null;
-
-    if (minNum != null || maxNum != null) {
-      // Build an $or that checks both priceNumeric (if populated) and raw price string
-      const priceRangeConditions = [];
-
-      if (minNum != null && maxNum != null) {
-        priceRangeConditions.push(
-          { priceNumeric: { $gte: minNum, $lte: maxNum } },
-          { price: { $regex: `^${minNum}`, $options: 'i' } },
-          { price: { $regex: `^${maxNum}`, $options: 'i' } }
-        );
-      } else if (minNum != null) {
-        priceRangeConditions.push(
-          { priceNumeric: { $gte: minNum } },
-          { price: { $regex: `${minNum}`, $options: 'i' } }
-        );
-      } else if (maxNum != null) {
-        priceRangeConditions.push(
-          { priceNumeric: { $lte: maxNum } },
-          { price: { $regex: `${maxNum}`, $options: 'i' } }
-        );
-      }
-
-      filter.$or = priceRangeConditions;
-    }
+    const minNum = normalizeBudgetValue(minBudget);
+    const maxNum = normalizeBudgetValue(maxBudget);
+    const maxBudgetOpen = String(req.query?.maxBudgetOpen || '').trim() === '1';
 
     // status — "Ready to Move" (isNewDevelopment=false) | "Under Construction" (isNewDevelopment=true)
     if (status) {
@@ -354,7 +364,37 @@ const getAllProperties = async (req, res, next) => {
 
     console.log('[Property Filter] filter:', JSON.stringify(filter, null, 2));
 
-    const properties = await Property.find(filter).sort({ createdAt: -1 });
+    let properties = await Property.find(filter).sort({ createdAt: -1 });
+
+    if (minNum != null || maxNum != null) {
+      let lower = Number.isFinite(minNum) ? minNum : null;
+      let upper = Number.isFinite(maxNum) ? maxNum : null;
+
+      // "5 Cr+" as max means open-ended upper bound.
+      if (maxBudgetOpen) {
+        if (lower == null && upper != null) lower = upper;
+        upper = null;
+      }
+
+      if (lower != null && upper != null && lower > upper) {
+        const tmp = lower;
+        lower = upper;
+        upper = tmp;
+      }
+
+      properties = properties.filter((p) => {
+        const range = derivePropertyBudgetRange(p);
+        if (!range) return false;
+
+        if (lower != null && upper != null) {
+          // Overlap with requested range.
+          return range.high >= lower && range.low <= upper;
+        }
+        if (lower != null) return range.high >= lower;
+        if (upper != null) return range.low <= upper;
+        return true;
+      });
+    }
 
     res.json({
       success: true,
@@ -549,7 +589,7 @@ const createBrochureLead = async (req, res, next) => {
 
     // 🧾 Validate input
     const name = req.body?.name != null ? String(req.body.name).trim() : '';
-    const mobile = normalizeMobile(req.body?.phone ?? req.body?.mobile);
+    const mobile = trimPhone(req.body?.phone ?? req.body?.mobile);
 
     if (!name) {
       const error = new Error('Name is required');
@@ -557,8 +597,8 @@ const createBrochureLead = async (req, res, next) => {
       throw error;
     }
 
-    if (!/^\d{10}$/.test(mobile)) {
-      const error = new Error('Valid 10-digit mobile number is required');
+    if (!isValidPhone(mobile)) {
+      const error = new Error(PHONE_VALIDATION_MESSAGE);
       error.statusCode = 400;
       throw error;
     }
@@ -731,7 +771,7 @@ const createContactLead = async (req, res, next) => {
   try {
     const name = req.body?.name != null ? String(req.body.name).trim() : '';
     const email = req.body?.email != null ? String(req.body.email).trim() : '';
-    const mobile = normalizeMobile(req.body?.phone);
+    const mobile = trimPhone(req.body?.phone);
     const message = req.body?.message != null ? String(req.body.message).trim() : '';
     const date = req.body?.date != null ? String(req.body.date).trim() : '';
     const time = req.body?.time != null ? String(req.body.time).trim() : '';
@@ -740,8 +780,8 @@ const createContactLead = async (req, res, next) => {
       return res.status(400).json({ message: "Name required" });
     }
 
-    if (!/^\d{10}$/.test(mobile)) {
-      return res.status(400).json({ message: "Invalid phone" });
+    if (!isValidPhone(mobile)) {
+      return res.status(400).json({ message: PHONE_VALIDATION_MESSAGE });
     }
 
     // 🔥 SEND TO GOOGLE SHEET
