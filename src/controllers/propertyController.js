@@ -22,13 +22,26 @@ const toPositiveNum = (v) => {
 
 const parsePriceNumeric = (priceStr) => {
   if (!priceStr || typeof priceStr !== 'string') return null;
+
   const cleaned = priceStr.trim().toUpperCase();
-  let num = parseFloat(cleaned.replace(/[^0-9.]/g, ''));
+
+  let num = parseFloat(
+    cleaned.replace(/,/g, '').match(/[\d.]+/)?.[0]
+  );
+
   if (!Number.isFinite(num)) return null;
-  if (cleaned.includes('CRORE') || cleaned.includes('CR')) num *= 10000000;
-  else if (cleaned.includes('LAKH') || cleaned.includes('LK')) num *= 100000;
-  else if (cleaned.includes('THOUSAND') || cleaned.includes('K')) num *= 1000;
-  return num;
+
+  if (/\b(CRORE|CR)\b/.test(cleaned)) {
+    num *= 10000000;
+  }
+  else if (/\b(LAKH|LK)\b/.test(cleaned)) {
+    num *= 100000;
+  }
+  else if (/(THOUSAND|K)\b/.test(cleaned)) {
+    num *= 1000;
+  }
+
+  return Math.round(num);
 };
 
 const normalizeBudgetValue = (value) => {
@@ -187,11 +200,11 @@ const uploadFilesToCloudinary = async (files = [], opts = {}) => {
         resource_type: isPdf ? 'raw' : 'image',
       });
 
-      await unlinkFile(file.path).catch(() => {});
+      await unlinkFile(file.path).catch(() => { });
 
       return result.secure_url;
     } catch (error) {
-      await unlinkFile(file.path).catch(() => {});
+      await unlinkFile(file.path).catch(() => { });
       const cloudinaryMessage =
         error?.message ||
         error?.error?.message ||
@@ -469,7 +482,11 @@ const updateProperty = async (req, res, next) => {
     }
 
     if (typeof req.body.title !== 'undefined') existing.title = incoming.title;
-    if (typeof req.body.price !== 'undefined') existing.price = incoming.price;
+    // if (typeof req.body.price !== 'undefined') existing.price = incoming.price;
+    if (typeof req.body.price !== 'undefined') {
+      existing.price = incoming.price;
+      existing.priceNumeric = parsePriceNumeric(incoming.price);
+    }
     if (typeof req.body.minPrice !== 'undefined') existing.minPrice = incoming.minPrice;
     if (typeof req.body.maxPrice !== 'undefined') existing.maxPrice = incoming.maxPrice;
     if (typeof req.body.currency !== 'undefined') existing.currency = incoming.currency;
